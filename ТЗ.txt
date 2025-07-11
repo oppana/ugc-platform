@@ -1,0 +1,203 @@
+Архитектура UGC-платформы для Telegram: Этапы реализации
+
+Цель: Создать масштабируемую развлекательную платформу с использованием топиков Telegram
+Фундаментальные принципы
+
+    Event-Driven Architecture (EDA) - все ключевые действия как события
+
+    Hexagonal Architecture - изоляция бизнес-логики
+
+    Infrastructure as Code (IaC) - воспроизводимость окружений
+
+    Zero-Trust Security - верификация на каждом уровне
+
+Этап 1: Ядро системы (MVP)
+
+Срок: 2-3 месяца
+Цель: Рабочий прототип с базовым функционалом
+Компонент	Технологии	Требования
+Telegram Bot	Python (Aiogram 3.x)	Поддержка команд: /post, /feed, /report
+API Gateway	FastAPI + Uvicorn	REST + WebSocket, JWT-аутентификация
+Бизнес-логика	Чистая архитектура	Независимость от фреймворков, тесты покрытие >80%
+База данных	PostgreSQL 15 + Timescale	Шардирование по топикам с первого дня
+Кеш	Redis 7+	Кеш топа постов, стоп-слов, сессий
+Хранилище медиа	MinIO (S3-совместимое)	Репликация между зонами
+Админка	Vue 3 + Quasar	CRUD пользователей, модерация, аналитика
+
+Ключевые сущности в БД:
+plaintext
+
+users (id UUID, telegram_id BIGINT, role ENUM, karma INT)
+topics (id UUID, name VARCHAR, is_active BOOL)
+posts (id UUID, user_id FK, topic_id FK, content JSONB, status ENUM)
+moderation_log (id UUID, post_id FK, action ENUM, reason TEXT)
+
+Этап 2: Модерация и автоматизация
+
+Срок: 1-2 месяца после MVP
+Цель: Система контент-фильтрации и автоматического управления
+Модуль	Решение	Особенности
+Basic Moderation	Регулярные выражения	Подключаемые фильтры через плагины
+AI-фильтрация	Микросервис на Python	Поддержка ONNX-моделей для CPU/GPU
+Капча-сервис	hCaptcha/FriendlyCaptcha	Адаптивная сложность для подозрительных действий
+Уведомления	WebSocket + FCM	Реалтайм алерты для модераторов
+Task Queue	Celery + Redis/RabbitMQ	Приоритетные очереди для срочной модерации
+
+Workflow модерации:
+Diagram
+Code
+
+sequenceDiagram
+    participant B as Бот
+    participant M as Модерация
+    participant AI as AI-сервис
+    participant DB as База
+    
+    B->>M: Новый пост
+    M->>AI: Проверка NSFW
+    alt Чистый контент
+        M->>DB: Статус APPROVED
+    else Нарушения
+        M->>DB: Статус PENDING_MOD
+        M->>Moderators: Уведомление
+    end
+
+Этап 3: Масштабирование и оптимизация
+
+Срок: По мере роста нагрузки (10K+ DAU)
+Цель: Поддержка высокой нагрузки и геораспределение
+
+Инфраструктурные изменения:
+
+    Шардирование БД:
+
+        Горизонтальное: posts → posts_eu, posts_asia
+
+        Вертикальное: Отдельные инстансы для чтения/записи
+
+    Кеширование:
+
+        Redis Cluster с 6+ нодами
+
+        Локализация кеша: Redis Enterprise Active-Active
+
+    CDN для медиа:
+
+        Cloudflare R2 + Argo Smart Routing
+
+        Оптимизация изображений: WebP/AVIF конвертация
+
+    Микросервисы:
+
+        Разделение на: User-Service, Feed-Service, Moderation-Service
+
+        gRPC для межсервисного взаимодействия
+
+Этап 4: Расширение экосистемы
+
+Срок: 6+ месяцев после запуска
+Цель: Интеграции и монетизация
+Компонент	Реализация	Бизнес-ценность
+Telegram MiniApp	React + Vite	Персонализированная лента, статистика
+Рекомендации	Python (LightFM)	Гибридные рекомендации (контент + коллаборативная)
+Партнерский API	GraphQL + OAuth 2.1	Доступ к трендам для СМИ
+Монетизация	Stripe/Braintree	Премиум-подписки, буст постов
+Аналитика	ClickHouse + Superset	Real-time дашборды поведения пользователей
+Требования к инфраструктуре
+
+Этап 1 (MVP):
+yaml
+
+servers:
+  - type: c2.medium (4vCPU, 8GB RAM)
+    role: [app, db, cache]
+    count: 1
+storage:
+  - type: ssd
+    size: 100GB (PostgreSQL)
+  - type: ssd
+    size: 50GB (MinIO)
+
+Этап 3 (Масштабирование):
+yaml
+
+clusters:
+  - name: eu-central
+    nodes:
+      - type: c2.large (8vCPU, 16GB RAM): api-gateway
+      - type: db.r5.xlarge: postgres-master
+      - type: db.r5.large: postgres-replica x2
+      - type: cache.r6g.xlarge: redis-node x3
+  - name: asia-southeast
+    nodes: [...]
+
+Критические нефункциональные требования
+
+    Производительность:
+
+        Время отклика API: < 300 мс (p99)
+
+        Обработка поста: < 2 сек (включая модерацию)
+
+    Безопасность:
+
+        GDPR/CCPA compliance
+
+        Ежеквартальные penetration tests
+
+        Шифрование данных в rest/motion (AES-256)
+
+    Надежность:
+
+        SLA 99.95%
+
+        Multi-AZ развертывание
+
+        Автоматическое восстановление
+
+    Мониторинг:
+
+        Prometheus + Grafana (метрики)
+
+        ELK Stack (логи)
+
+        Jaeger (трейсинг)
+
+Документация для разработчиков
+
+Должна включать:
+
+    ADR (Architecture Decision Record) для ключевых решений
+
+    ERD-диаграммы (dbdiagram.io формат)
+
+    API-спецификации (OpenAPI 3.1 + AsyncAPI)
+
+    Инфраструктурные схемы (Draw.io/Cloudcraft)
+
+    Onboarding-гайд (локальный запуск за 5 шагов)
+
+Delivery Roadmap:
+Diagram
+Code
+
+gantt
+    title План реализации
+    dateFormat  YYYY-MM-DD
+    section Этап 1
+    Ядро системы       :a1, 2024-01-01, 90d
+    Базовая модерация  : 2024-01-15, 60d
+    
+    section Этап 2
+    AI-фильтрация     :2024-03-01, 45d
+    Уведомления       :2024-03-10, 30d
+    
+    section Этап 3
+    Шардирование БД   :2024-04-01, 30d
+    Геораспределение  :2024-04-15, 45d
+    
+    section Этап 4
+    Рекомендации      :2024-06-01, 60d
+    Партнерский API   :2024-06-15, 45d
+
+Эта архитектура позволяет начать с минимального работающего продукта и последовательно наращивать сложность, сохраняя целостность системы. Все компоненты проектируются с учетом горизонтального масштабирования и заменяемости.
